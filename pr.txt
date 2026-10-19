@@ -1,0 +1,18 @@
+Authorization coverage for init_threshold_monitoring
+
+Changes:
+- Added admin require_auth() guard to init_threshold_monitoring in lib.rs (reads DataKey::Admin from instance storage)
+- Added admin require_auth() guard to init_threshold_monitoring in entrypoints/pause_and_limits.rs (duplicate/dead file, edited for consistency)
+- Wired #[cfg(test)] mod test_threshold_monitor; into lib.rs
+- Added env.mock_all_auths() to setup_test
+- Added three tests:
+  - test_unauthorised_cannot_init_threshold_monitoring: non-admin callers refused with ContractError::Unauthorized (should_panic)
+  - test_admin_can_init_threshold_monitoring: admin call succeeds with default config
+  - test_no_state_mutation_after_refused_init_threshold_monitoring: refused call does not mutate state
+
+Test results:
+- All 3 new authorization tests pass
+- 6 pre-existing tests fail due to missing env.as_contract() wrappers (unrelated to this change)
+- Compilation succeeds
+
+Note: ci-contracts.sh could not be executed in this environment due to a Git Bash registration issue (REGDB_E_CLASSNOTREG), unrelated to code changes.

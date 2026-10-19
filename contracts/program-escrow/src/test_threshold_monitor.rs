@@ -1,10 +1,16 @@
 #[cfg(test)]
 mod test {
-    use crate::threshold_monitor::{self, ThresholdConfig, WindowMetrics};
+    extern crate std;
+    use crate::errors::ContractError;
+    use crate::threshold_monitor::{self, ThresholdConfig, ThresholdKey, WindowMetrics};
     use crate::{ProgramEscrowContract, ProgramEscrowContractClient};
-    use soroban_sdk::{testutils::Address as _, Address, Env};
+    use soroban_sdk::{
+        testutils::{Address as _, MockAuth, MockAuthInvoke},
+        Address, Env, IntoVal, Val, Vec, symbol_short,
+    };
 
     fn setup_test(env: &Env) -> (ProgramEscrowContractClient, Address) {
+        env.mock_all_auths();
         let contract_id = env.register_contract(None, ProgramEscrowContract);
         let client = ProgramEscrowContractClient::new(env, &contract_id);
         let admin = Address::generate(env);
@@ -191,7 +197,7 @@ mod test {
             &Some(initial_balance),
             &None,
         );
-        client.publish_program();
+        client.publish_program(&program_id, &admin);
         
         // Set global rate limit config to be very restrictive (max 1 operation).
         client.update_rate_limit_config(&3600, &1, &60);
@@ -210,7 +216,7 @@ mod test {
         
         // This should SUCCEED because global RateLimitConfig is not strictly enforced on payout sizes.
         // The per-program threshold is the only effectively enforced limit.
-        let result = client.try_batch_payout(&recipients, &amounts, &None);
+        let result = client.try_batch_payout(&recipients, &amounts);
         assert!(result.is_ok(), "Payout should succeed, global rate limit is not enforced for batch size");
         
         // Scenario 2: Satisfies global rate limit (batch size 1 <= max_operations 1)
@@ -221,7 +227,7 @@ mod test {
         amounts2.push_back(2000);
         
         // This should FAIL because the per-program spend threshold is strictly enforced.
-        let result2 = client.try_batch_payout(&recipients2, &amounts2, &None);
+        let result2 = client.try_batch_payout(&recipients2, &amounts2);
         assert!(result2.is_err(), "Payout should fail, per-program spend threshold is strictly enforced");
     }
 
@@ -281,5 +287,111 @@ mod test {
         config.set_time_window_secs(16777216); // one over max (24 bits)
         assert_eq!(config.time_window_secs(), 0); // masked to 0
     }
+
+    /// Non-admin callers must be refused with `ContractError::Unauthorized`.
+    #[test]
+    #[should_panic(expected = "Unauthorized")]
+    fn test_unauthorised_cannot_init_threshold_monitoring() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, ProgramEscrowContract);
+        let client = ProgramEscrowContractClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        let non_admin = Address::generate(&env);
+
+        client.initialize_contract(&admin);
+
+        // Mock only non_admin — contract requires admin.require_auth(), so this must panic.
+        env.mock_auths(&[MockAuth {
+            address: &non_admin,
+            invoke: &MockAuthInvoke {
+                contract: &contract_id,
+                fn_name: "init_threshold_monitoring",
+                args: Vec::<Val>::new(&env).into_val(&env),
+                sub_invokes: &[],
+            },
+        }]);
+
+        client.init_threshold_monitoring();
+    }
+
+    /// Admin call succeeds and config is set to defaults.
+    #[test]
+    fn test_admin_can_init_threshold_monitoring() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, ProgramEscrowContract);
+        let client = ProgramEscrowContractClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+
+        client.initialize_contract(&admin);
+
+        // Mock admin auth so require_auth() passes.
+        env.mock_auths(&[MockAuth {
+            address: &admin,
+            invoke: &MockAuthInvoke {
+                contract: &contract_id,
+                fn_name: "init_threshold_monitoring",
+                args: Vec::<Val>::new(&env).into_val(&env),
+                sub_invokes: &[],
+            },
+        }]);
+
+        client.init_threshold_monitoring();
+
+        // Verify config was set with defaults.
+        let config = client.get_threshold_config();
+        assert_eq!(config.failure_rate_threshold(), 10);
+        assert_eq!(config.time_window_secs(), 600);
+        assert_eq!(config.cooldown_period_secs(), 300);
+    }
+
+    /// A refused call must not mutate any state.
+    #[test]
+    fn test_no_state_mutation_after_refused_init_threshold_monitoring() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, ProgramEscrowContract);
+        let client = ProgramEscrowContractClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        let non_admin = Address::generate(&env);
+
+        client.initialize_contract(&admin);
+
+        // Config key must not exist before any init.
+        let config_key = (symbol_short!("th"), ThresholdKey::Config);
+        assert!(
+            !env.as_contract(&contract_id, || {
+                env.storage().persistent().has(&config_key)
+            }),
+            "config key must not exist before init"
+        );
+
+        // Attempt unauthorized init — must panic.
+        env.mock_auths(&[MockAuth {
+            address: &non_admin,
+            invoke: &MockAuthInvoke {
+                contract: &contract_id,
+                fn_name: "init_threshold_monitoring",
+                args: Vec::<Val>::new(&env).into_val(&env),
+                sub_invokes: &[],
+            },
+        }]);
+
+        let panic_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            client.init_threshold_monitoring();
+        }));
+        assert!(
+            panic_result.is_err(),
+            "unauthorised init must panic"
+        );
+
+        // Config key must still not exist — no state was mutated.
+        assert!(
+            !env.as_contract(&contract_id, || {
+                env.storage().persistent().has(&config_key)
+            }),
+            "config key must not exist after refused init"
+        );
+    }
 }
+
+
 
