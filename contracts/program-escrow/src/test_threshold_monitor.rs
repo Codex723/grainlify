@@ -23,11 +23,11 @@ mod test {
     fn test_threshold_config_initialization() {
         let env = Env::default();
         let (client, _admin) = setup_test(&env);
-        
-        // Initialize threshold monitoring
+
+// Initialize threshold monitoring
         client.init_threshold_monitoring();
-        
-        // Get config and verify defaults
+
+// Get config and verify defaults
         let config = client.get_threshold_config();
         assert_eq!(config.failure_rate_threshold(), 10);
         assert!(config.outflow_volume_threshold > 0);
@@ -39,22 +39,22 @@ mod test {
     #[test]
     fn test_threshold_config_validation() {
         let env = Env::default();
-        
-        // Test invalid failure threshold (too high)
+
+// Test invalid failure threshold (too high)
         let mut config = ThresholdConfig::default();
         config.set_failure_rate_threshold(2000);
         assert!(config.validate().is_err());
-        
-        // Test invalid failure threshold (zero)
+
+// Test invalid failure threshold (zero)
         config.set_failure_rate_threshold(0);
         assert!(config.validate().is_err());
-        
-        // Test invalid time window (too short)
+
+// Test invalid time window (too short)
         config.set_failure_rate_threshold(10);
         config.set_time_window_secs(5);
         assert!(config.validate().is_err());
-        
-        // Test invalid time window (too long)
+
+// Test invalid time window (too long)
         config.set_time_window_secs(100000);
         assert!(config.validate().is_err());
         
@@ -66,8 +66,8 @@ mod test {
     #[test]
     fn test_metrics_tracking() {
         let env = Env::default();
-        
-        // Record some operations
+
+// Record some operations
         threshold_monitor::init_threshold_monitor(&env);
         threshold_monitor::record_operation_success(&env);
         threshold_monitor::record_operation_success(&env);
@@ -81,7 +81,7 @@ mod test {
     #[test]
     fn test_outflow_tracking() {
         let env = Env::default();
-        
+
         threshold_monitor::init_threshold_monitor(&env);
         threshold_monitor::record_outflow(&env, 1000);
         threshold_monitor::record_outflow(&env, 2000);
@@ -91,6 +91,7 @@ mod test {
         assert_eq!(metrics.total_outflow, 3500);
         assert_eq!(metrics.max_single_outflow, 2000);
     }
+
 
     #[test]
     fn test_failure_threshold_breach() {
